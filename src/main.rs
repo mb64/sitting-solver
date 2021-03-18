@@ -1,6 +1,7 @@
 pub mod cnf_reader;
 pub mod data;
 pub mod priority_queue;
+pub mod simplify;
 pub mod solver;
 pub mod vec_map;
 

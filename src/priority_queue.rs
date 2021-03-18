@@ -78,8 +78,14 @@ fn right(index: usize) -> usize {
 
 impl<K: NumericId, P: Ord + Copy> PriorityQueue<K, P> {
     /// The number of elements left in the heap
+    #[inline]
     pub fn len(&self) -> usize {
         self.heap.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
     }
 
     /// Make a new priority queue, with the given initial priorities, and the
@@ -108,9 +114,9 @@ impl<K: NumericId, P: Ord + Copy> PriorityQueue<K, P> {
 
     /// Remove and return the key with the highest priority
     pub fn pop(&mut self) -> Option<K> {
-        if self.heap.is_empty() {
+        if self.is_empty() {
             None
-        } else if self.heap.len() == 1 {
+        } else if self.len() == 1 {
             let key = self.heap.pop().unwrap().key();
 
             self.inds[key] = u32::MAX;
@@ -130,10 +136,10 @@ impl<K: NumericId, P: Ord + Copy> PriorityQueue<K, P> {
     /// Remove the given key
     pub fn remove(&mut self, key: K) {
         let ind = mem::replace(&mut self.inds[key], u32::MAX);
-        if ind >= self.heap.len() as u32 - 1 {
+        if ind >= self.len() as u32 - 1 {
             if ind == u32::MAX {
                 return;
-            } else if ind == self.heap.len() as u32 - 1 {
+            } else if ind == self.len() as u32 - 1 {
                 self.heap.pop().unwrap();
                 return;
             } else {
@@ -149,7 +155,7 @@ impl<K: NumericId, P: Ord + Copy> PriorityQueue<K, P> {
     pub fn re_add(&mut self, key: K) {
         debug_assert!(self.inds[key] == u32::MAX);
         self.heap.push(Entry::new(key, self.priorities[key]));
-        self.bubble_up(self.heap.len() - 1);
+        self.bubble_up(self.len() - 1);
     }
 
     /// Apply a function to decrease the priority of a key
@@ -178,7 +184,7 @@ impl<K: NumericId, P: Ord + Copy> PriorityQueue<K, P> {
 
     /// restore heap properties at index `i` by moving it down the heap
     fn bubble_down(&mut self, mut i: usize) {
-        let len = self.heap.len();
+        let len = self.len();
 
         while left(i) < len {
             if self.heap[i] < self.heap[left(i)] {

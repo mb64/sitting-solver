@@ -10,6 +10,7 @@ use crate::data::{Clause, Literal, VarId};
 
 use std::fs::File;
 use std::io::{self, prelude::*, BufReader};
+use tinyvec::TinyVec;
 
 /// Returns (nvars, the clauses)
 pub fn read_from_file(filename: &str) -> io::Result<(u32, Vec<Clause>)> {
@@ -38,7 +39,7 @@ pub fn read_from_file(filename: &str) -> io::Result<(u32, Vec<Clause>)> {
 
     for line in lines {
         let line = line?;
-        let mut clause = Vec::new();
+        let mut clause = TinyVec::new();
 
         for chunk in line.split_whitespace() {
             let lit_id: i32 = chunk.parse().unwrap();
@@ -54,7 +55,7 @@ pub fn read_from_file(filename: &str) -> io::Result<(u32, Vec<Clause>)> {
             }
         }
 
-        clauses.push(clause.into_boxed_slice());
+        clauses.push(clause);
     }
 
     Ok((nvars, clauses))
