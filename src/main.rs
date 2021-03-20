@@ -11,6 +11,21 @@ fn main() -> io::Result<()> {
     let args: Vec<_> = env::args().collect();
     let (nvars, clauses) = cnf_reader::read_from_file(&args[1])?;
 
+    println!(
+        "Solving problem with {} vars and {} clauses",
+        nvars,
+        clauses.len()
+    );
+    let clauses = {
+        let mut pre = simplify::Preprocessing::new(nvars, clauses);
+        if pre.simplify().is_err() {
+            println!("Preprocessing returned error");
+            println!("{:#?}", pre);
+            return Ok(());
+        }
+        pre.get_clauses()
+    };
+    println!("{} clauses left", clauses.len());
     let mut solver = solver::Solver::new(nvars, clauses);
     if solver.solve() {
         println!("Sat!");

@@ -5,6 +5,10 @@ use std::fmt::{self, Debug, Formatter};
 use std::ops::Not;
 use tinyvec::TinyVec;
 
+/// The error raised when backtracking is needed, and/or the whole thing is UNSAT
+#[derive(Copy, Clone, Debug)]
+pub struct Unsat;
+
 /// A clause ID
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct ClauseId(pub u32);

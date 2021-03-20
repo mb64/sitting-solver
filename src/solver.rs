@@ -2,10 +2,6 @@ use crate::data::*;
 use crate::priority_queue::PriorityQueue;
 use crate::vec_map::VecMap;
 
-/// The error raised when backtracking is needed
-#[derive(Copy, Clone, Debug)]
-struct Unsat;
-
 /// The main state for the solver
 #[derive(Debug, Clone)]
 pub struct Solver {

@@ -136,7 +136,7 @@ impl<K: NumericId, P: Ord + Copy> PriorityQueue<K, P> {
     /// Remove the given key
     pub fn remove(&mut self, key: K) {
         let ind = mem::replace(&mut self.inds[key], u32::MAX);
-        if ind >= self.len() as u32 - 1 {
+        if self.is_empty() || ind >= self.len() as u32 - 1 {
             if ind == u32::MAX {
                 return;
             } else if ind == self.len() as u32 - 1 {
