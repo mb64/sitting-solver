@@ -5,7 +5,8 @@ use std::fmt::{self, Debug, Formatter};
 use std::ops::Not;
 use tinyvec::TinyVec;
 
-/// The error raised when backtracking is needed, and/or the whole thing is UNSAT
+/// The error raised when backtracking is needed, and/or the whole thing is
+/// UNSAT
 #[derive(Copy, Clone, Debug)]
 pub struct Unsat;
 
@@ -55,8 +56,8 @@ impl NumericId for VarId {
 
 /// A literal is either a variable or the negation of a variable
 ///
-/// They are encoded in 32 bits using a 31-bit numerical id, plus a flag for whether they're
-/// negated
+/// They are encoded in 32 bits using a 31-bit numerical id, plus a flag for
+/// whether they're negated
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct Literal {
     inner: u32,

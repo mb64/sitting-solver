@@ -1,4 +1,5 @@
-//! Read data from a file in the simplified DIMACS format used by the SAT competition
+//! Read data from a file in the simplified DIMACS format used by the SAT
+//! competition
 //!
 //! See
 //! (http://www.satcompetition.org/2011/format-benchmarks2011.html)[http://www.satcompetition.org/2011/format-benchmarks2011.html]

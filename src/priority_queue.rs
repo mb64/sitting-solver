@@ -1,4 +1,5 @@
-//! A priority queue supporting random-access updates to the priority of elements
+//! A priority queue supporting random-access updates to the priority of
+//! elements
 //!
 //! Implemented with a binary heap
 

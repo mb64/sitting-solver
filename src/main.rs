@@ -8,6 +8,8 @@ pub mod vec_map;
 use std::{env, io};
 
 fn main() -> io::Result<()> {
+    pretty_env_logger::init();
+
     let args: Vec<_> = env::args().collect();
     let (nvars, clauses) = cnf_reader::read_from_file(&args[1])?;
 
