@@ -1,10 +1,6 @@
-pub mod cnf_reader;
-pub mod core;
-pub mod data;
-pub mod heuristic;
-pub mod simplify;
-pub mod vec_map;
+mod cnf_reader;
 
+use sitting_solver::Preprocessor;
 use std::{env, io};
 
 fn main() -> io::Result<()> {
@@ -19,7 +15,7 @@ fn main() -> io::Result<()> {
         clauses.len()
     );
     let (mut solver, post) = {
-        let mut pre = simplify::Preprocessing::new(nvars, clauses);
+        let mut pre = Preprocessor::new(nvars, clauses);
         if pre.simplify().is_err() {
             println!("Preprocessing returned error");
             println!("{:#?}", pre);

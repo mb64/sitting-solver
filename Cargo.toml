@@ -4,13 +4,19 @@ version = "0.1.0"
 authors = ["Mark Barbone <mark.l.barbone@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "sitting_solver"
+path = "src/lib.rs"
 
-[profile.dev]
-opt-level = 2
+[[bin]]
+name = "sitting-solver"
+path = "src/main.rs"
 
 [dependencies]
 indexmap = "1.6.2"
 tinyvec = { version = "1.1.1", features = ["alloc"] }
 log = "0.4.14"
 pretty_env_logger = "0.4.0"
+
+[profile.dev]
+opt-level = 2

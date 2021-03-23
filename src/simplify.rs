@@ -9,27 +9,66 @@
 //! There are a bunch of simplification operations, which are done to a
 //! fixpoint:
 //!
-//!  - [x] Unit propation: if there is a clause with just one literal, it must
-//!    be true.  This is also the main (currently only) simplification step in
-//!    the DPLL loop.
+//!  - Unit propagation: if there is a clause with just one literal, it must be
+//!    true.  This is also the main (currently only) simplification step in the
+//!    DPLL loop.
 //!
-//!  - [x] Redundant clauses: if a clause is a superset of another clause, it
-//!    can be removed.
+//!  - Redundant clauses: if a clause is a superset of another clause, it can be
+//!    removed.
 //!
 //!    Example: `(x + y) and (x + y + z)` becomes `(x + y)`.
 //!
-//!  - [x] Almost redundant clauses: if a clause is *almost* a superset of
-//!    another clause, but one contains `-x` and the other `x`, then `±x` can be
-//!    deleted from the bigger clause.
+//!  - Almost redundant clauses: if a clause is *almost* a superset of another
+//!    clause, but one contains `-x` and the other `x`, then `±x` can be deleted
+//!    from the bigger clause.
 //!
 //!    Example: `(x + y) and (-x + y + z)` becomes `(x + y) and (y + z)`
 //!
-//!  - [x] Pure literals: if the problem contains a literal but not its
-//!    negation, it can be assumed to be true.
+//!  - Pure literals: if the problem contains a literal but not its negation, it
+//!    can be assumed to be true.
 //!
-//!  - [x] Almost pure literals: if the problem only contains the negation of a
-//!    literal *once*, it's worth it to get rid of the variable through
-//!    "resolution": turn every pair `(x + A) and (-x + B)` into `(A + B)`.
+//!  - Almost pure literals: if the problem only contains the negation of a
+//!    literal a few times, it's sometimes worth it to get rid of the variable
+//!    through "resolution": turn every pair `(x + A) and (-x + B)` into `(A +
+//!    B)`.
+//!
+//! Not yet implemented:
+//!
+//!  - Equivalent literals: given the clauses `(x + -y)` and `(-x + y)`, `x` and
+//!    `y` are equivalent.
+//!
+//! ## Example
+//!
+//! Make a [`Preprocessor`] struct using [`Preprocessor::new`], run the
+//! simplification steps to a fixpoint using [`Preprocessor::simplify`], and
+//! get the resulting [`Solver`] and [`Postprocessor`] using
+//! [`Preprocessor::finish`].
+//!
+//! ```
+//! # use sitting_solver::data::*;
+//! # use tinyvec::tiny_vec;
+//! # use sitting_solver::Preprocessor;
+//! let var_count = 2;
+//! let x = Literal::new(VarId(0));
+//! let y = Literal::new(VarId(1));
+//!
+//! let clauses = vec![
+//!     tiny_vec![x, y],
+//!     tiny_vec![x, !y],
+//!     tiny_vec![!x, y],
+//!     tiny_vec![!x, !y],
+//! ];
+//!
+//! let mut pre = Preprocessor::new(var_count, clauses);
+//!
+//! // This problem is simple enough for the preprocessor to solve it completely
+//! assert_eq!(pre.simplify(), Err(Unsat));
+//!
+//! // If it didn't, we would have to go on to use the main DPLL solver:
+//! let (solver, post) = pre.finish();
+//! // ...
+//! # drop((solver, post));
+//! ```
 
 use crate::core::Solver;
 use crate::data;
@@ -129,6 +168,7 @@ impl Clause {
     fn remove(&mut self, ind: usize) -> Result<(), Unsat> {
         self.clause.swap_remove(ind);
         if self.clause.is_empty() {
+            log::info!("Preprocessing found UNSAT: removed the last var from a clause");
             Err(Unsat)
         } else {
             self.sig = signature(&self.clause[..]);
@@ -155,31 +195,38 @@ enum Soln {
     Resolution,
 }
 
-/// The main state for the preprocessor.
+/// The main state for the preprocessor. See the [module
+/// docs][`crate::simplify`] for more info
 #[derive(Debug, Clone)]
-pub struct Preprocessing {
+pub struct Preprocessor {
+    original_clauses: Vec<data::Clause>,
     clauses: Vec<Clause>,
     counts: VecMap<Literal, u32>,
     solutions: IndexMap<VarId, Soln>,
     at_fixpoint: bool,
 }
 
-/// The main state for the post-processor.  It is used to undo simplifications
-/// intoduced by the preprocssor, after the core solver has reached an answer.
+/// The main state for the post-processor. See the [module
+/// docs][`crate::simplify`] for more info
 ///
-/// Get a `Postprocessing` from [`Preprocessing::finish`].
+/// It is used to undo simplifications intoduced by the preprocssor, after the
+/// core solver has reached an answer.
+///
+/// Get a `Postprocessor` from [`Preprocessor::finish`].
 #[derive(Debug, Clone)]
-pub struct Postprocessing {
+pub struct Postprocessor {
+    original_clauses: Vec<data::Clause>,
     solutions: IndexMap<VarId, Soln>,
 }
 
-impl Preprocessing {
+impl Preprocessor {
     pub fn new(var_count: u32, clauses: Vec<data::Clause>) -> Self {
-        let clauses: Vec<_> = clauses
-            .into_iter()
+        let original_clauses = clauses;
+        let clauses: Vec<_> = original_clauses
+            .iter()
             .map(|c| Clause {
                 sig: signature(&c),
-                clause: c,
+                clause: c.clone(),
             })
             .collect();
         let mut counts = VecMap::new(vec![0; var_count as usize * 2]);
@@ -189,6 +236,7 @@ impl Preprocessing {
             }
         }
         Self {
+            original_clauses,
             clauses,
             counts,
             solutions: IndexMap::new(),
@@ -218,8 +266,8 @@ impl Preprocessing {
         Ok(())
     }
 
-    /// Build a [`Solver`] from the preprocessed problem.
-    pub fn finish(self) -> (Solver, Postprocessing) {
+    /// Build a [`Solver`] and [`Postprocessor`] from the preprocessed problem.
+    pub fn finish(self) -> (Solver, Postprocessor) {
         let nvars = self.num_vars() as u32;
         let active_vars: Vec<_> = self
             .vars()
@@ -228,7 +276,8 @@ impl Preprocessing {
             .collect();
         let clauses = self.clauses.into_iter().map(|c| c.clause).collect();
         let solver = Solver::new(nvars, &active_vars[..], clauses, self.counts);
-        let post = Postprocessing {
+        let post = Postprocessor {
+            original_clauses: self.original_clauses,
             solutions: self.solutions,
         };
         (solver, post)
@@ -236,7 +285,7 @@ impl Preprocessing {
 }
 
 /// Helper utilities
-impl Preprocessing {
+impl Preprocessor {
     fn num_vars(&self) -> usize {
         self.counts.inner.len() / 2
     }
@@ -259,7 +308,7 @@ impl Preprocessing {
             match old_value {
                 Soln::Resolution => unreachable!(),
                 _ if old_value != soln => {
-                    dbg!((soln, old_value, var));
+                    log::info!("Preprocessing found UNSAT: {:?} assigned twice", var);
                     return Err(Unsat);
                 }
                 _ => (),
@@ -292,7 +341,7 @@ impl Preprocessing {
 }
 
 /// Unit clauses
-impl Preprocessing {
+impl Preprocessor {
     /// Process all unit clauses
     fn unit_clauses(&mut self) -> Result<(), Unsat> {
         let mut worklist = Vec::new();
@@ -358,7 +407,7 @@ impl Preprocessing {
 }
 
 /// Redundant clauses and almost redundant clauses
-impl Preprocessing {
+impl Preprocessor {
     fn redundant_clauses(&mut self) -> Result<(), Unsat> {
         self.clauses.sort_by_key(|c| c.clause.len());
         for c in &mut self.clauses {
@@ -386,7 +435,7 @@ impl Preprocessing {
 }
 
 /// Pure literals
-impl Preprocessing {
+impl Preprocessor {
     /// Process all pure literals and almost pure literals
     fn pure_lits(&mut self) -> Result<(), Unsat> {
         for v in self.vars() {
@@ -401,9 +450,15 @@ impl Preprocessing {
                 self.one_pure_lit(!v)?;
             } else if self.counts[!v] == 0 {
                 self.one_pure_lit(v)?;
-            } else {
-                self.one_almost_pure_lit(v);
+            } else if !self.one_almost_pure_lit(v)? {
+                continue;
             }
+
+            // Handling a pure literal may have created new unit clauses. It's
+            // probably better to deal with them now than to have resolution
+            // possibly mask simplification opportunities
+            // TODO: is it really?
+            self.fixpoint(Self::unit_clauses)?;
         }
 
         Ok(())
@@ -432,8 +487,9 @@ impl Preprocessing {
 const ALMOST_PURE_LIMIT: u32 = 10;
 
 /// Almost pure literals
-impl Preprocessing {
-    fn one_almost_pure_lit(&mut self, lit: Literal) {
+impl Preprocessor {
+    /// Return `true` iff it was solved by resolution
+    fn one_almost_pure_lit(&mut self, lit: Literal) -> Result<bool, Unsat> {
         log::debug!("Trying almost pure literal {:?}", lit);
 
         let mut positive_clauses = Vec::new();
@@ -455,12 +511,12 @@ impl Preprocessing {
                     lit,
                     &self.clauses[p].clause[..],
                     &self.clauses[n].clause[..],
-                ));
+                )?);
 
                 // Make sure not to generate more clauses than we started with
                 if new_clauses.len() > old_len {
                     log::debug!("{:?} wasn't almost-pure enough :(", lit);
-                    return;
+                    return Ok(false);
                 }
             }
         }
@@ -483,17 +539,23 @@ impl Preprocessing {
                 self.counts[l] -= 1;
             }
         }
+
         // If there's more old clauses than new clauses, remove them
-        for i in inds {
+        // Be sure to remove them back to front so that indices don't change
+        let mut leftovers: Vec<_> = inds.collect();
+        leftovers.sort_by(|a, b| b.cmp(a));
+        for i in leftovers {
             self.remove_clause(i);
         }
+
+        Ok(true)
     }
 
     /// Goal: make a new clause `(c1 - lit) ++ (c2 - !lit)`
     ///
     /// If that clause contains `x` and `!x` for some literal `x`, that's bad --
     /// return `None`
-    fn resolve_two(lit: Literal, c1: &[Literal], c2: &[Literal]) -> Option<Clause> {
+    fn resolve_two(lit: Literal, c1: &[Literal], c2: &[Literal]) -> Result<Option<Clause>, Unsat> {
         let mut result = {
             let clause: TinyVec<_> = c1.iter().copied().filter(|&l| l != lit).collect();
             Clause {
@@ -503,7 +565,7 @@ impl Preprocessing {
         };
         for l in c2.iter().copied().filter(|&l| l != !lit) {
             if result.contains(!l) {
-                return None;
+                return Ok(None);
             } else if result.contains(l) {
                 // don't want duplicates
                 continue;
@@ -512,6 +574,11 @@ impl Preprocessing {
             }
         }
 
-        Some(result)
+        if result.clause.is_empty() {
+            log::info!("Preprocessing found UNSAT: resolved to an empty clause");
+            Err(Unsat)
+        } else {
+            Ok(Some(result))
+        }
     }
 }

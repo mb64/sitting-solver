@@ -7,7 +7,7 @@ use tinyvec::TinyVec;
 
 /// The error raised when backtracking is needed, and/or the whole thing is
 /// UNSAT
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub struct Unsat;
 
 /// A clause ID

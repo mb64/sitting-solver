@@ -1,13 +1,12 @@
 //! Read data from a file in the simplified DIMACS format used by the SAT
 //! competition
 //!
-//! See
-//! (http://www.satcompetition.org/2011/format-benchmarks2011.html)[http://www.satcompetition.org/2011/format-benchmarks2011.html]
-//! for a description of the format.
+//! See <http://www.satcompetition.org/2011/format-benchmarks2011.html> for a description of the
+//! format.
 //!
 //! This could be a lot faster, more robust and less hacky
 
-use crate::data::{Clause, Literal, VarId};
+use sitting_solver::{Clause, Literal, VarId};
 
 use std::fs::File;
 use std::io::{self, prelude::*, BufReader};

@@ -74,8 +74,8 @@ impl Heuristic {
         };
 
         // heapify
-        if !this.is_empty() {
-            for i in (0..parent(vars.len() - 1)).rev() {
+        if vars.len() >= 2 {
+            for i in (0..=parent(vars.len() - 1)).rev() {
                 this.bubble_down(i);
             }
         }
