@@ -27,7 +27,7 @@
 //!  - [x] Pure literals: if the problem contains a literal but not its
 //!    negation, it can be assumed to be true.
 //!
-//!  - [ ] Almost pure literals: if the problem only contains the negation of a
+//!  - [x] Almost pure literals: if the problem only contains the negation of a
 //!    literal *once*, it's worth it to get rid of the variable through
 //!    "resolution": turn every pair `(x + A) and (-x + B)` into `(A + B)`.
 
@@ -37,6 +37,7 @@ use crate::vec_map::VecMap;
 use indexmap::IndexMap;
 use std::cmp::Ordering;
 use std::mem;
+use tinyvec::TinyVec;
 
 const SIG_BITS: u32 = 64;
 
@@ -133,6 +134,13 @@ impl Clause {
             Ok(())
         }
     }
+
+    fn add_lit(&mut self, lit: Literal) {
+        debug_assert!(!self.contains(lit) && !self.contains(!lit));
+
+        self.clause.push(lit);
+        self.sig |= 1 << (lit.var_id().0 % SIG_BITS);
+    }
 }
 
 // Something like this
@@ -186,13 +194,13 @@ impl Preprocessing {
         );
         log::debug!("self: {:#?}", self);
 
-        self.at_fixpoint = false;
-        while !self.at_fixpoint {
-            self.at_fixpoint = true;
-            self.pure_lits()?;
-            self.unit_clauses()?;
-            self.redundant_clauses()?;
-        }
+        self.fixpoint(|this| {
+            this.fixpoint(Self::unit_clauses)?;
+            this.fixpoint(Self::pure_lits)?;
+            this.fixpoint(Self::almost_pure_lits)?;
+            this.fixpoint(Self::redundant_clauses)?;
+            Ok(())
+        })?;
 
         log::info!(
             "Preprocessing eliminated {} vars and {} clauses",
@@ -250,6 +258,17 @@ impl Preprocessing {
                 Soln::True
             },
         )
+    }
+
+    fn fixpoint(&mut self, mut f: impl FnMut(&mut Self) -> Result<(), Unsat>) -> Result<(), Unsat> {
+        let old_at_fixpoint = self.at_fixpoint;
+        self.at_fixpoint = false;
+        while !self.at_fixpoint {
+            self.at_fixpoint = true;
+            f(self)?;
+        }
+        self.at_fixpoint &= old_at_fixpoint;
+        Ok(())
     }
 }
 
@@ -388,9 +407,106 @@ impl Preprocessing {
     }
 }
 
+/// If a literal occurs more than 10 times positively and more than 10 times
+/// negatively, don't bother trying to solve it by resolution -- it's likely not
+/// worth it
+const ALMOST_PURE_LIMIT: u32 = 10;
+
 /// Almost pure literals
 impl Preprocessing {
-    fn almost_pure_lits(&mut self) {
-        todo!()
+    /// Process all almost pure literals
+    fn almost_pure_lits(&mut self) -> Result<(), Unsat> {
+        for v in self.vars() {
+            if self.solutions.contains_key(&v.var_id()) {
+                continue;
+            }
+            if self.counts[v] > ALMOST_PURE_LIMIT && self.counts[!v] > ALMOST_PURE_LIMIT {
+                continue;
+            }
+
+            log::debug!("Trying almost pure literal {:?}", v);
+            self.one_almost_pure_lit(v);
+        }
+
+        Ok(())
+    }
+
+    fn one_almost_pure_lit(&mut self, lit: Literal) {
+        let mut positive_clauses = Vec::new();
+        let mut negative_clauses = Vec::new();
+        for (i, c) in self.clauses.iter().enumerate() {
+            if c.contains(lit) {
+                positive_clauses.push(i);
+            } else if c.contains(!lit) {
+                negative_clauses.push(i);
+            }
+        }
+
+        let old_len = positive_clauses.len() + negative_clauses.len();
+
+        let mut new_clauses = Vec::new();
+        for &p in &positive_clauses {
+            for &n in &negative_clauses {
+                new_clauses.extend(Self::resolve_two(
+                    lit,
+                    &self.clauses[p].clause[..],
+                    &self.clauses[n].clause[..],
+                ));
+
+                // Make sure not to generate more clauses than we started with
+                if new_clauses.len() > old_len {
+                    log::debug!("{:?} wasn't almost pure enough :(", lit);
+                    return;
+                }
+            }
+        }
+
+        // Replace the positive_clauses and negative_clauses with new_clauses
+        log::debug!(
+            "Success: replacing {} old clauses with {} new clauses",
+            old_len,
+            new_clauses.len()
+        );
+        let mut inds = positive_clauses.into_iter().chain(negative_clauses);
+        for new_clause in new_clauses {
+            let i = inds.next().unwrap();
+            for &l in &new_clause.clause {
+                self.counts[l] += 1;
+            }
+            let old_clause = mem::replace(&mut self.clauses[i], new_clause);
+            for l in old_clause.clause {
+                self.counts[l] -= 1;
+            }
+        }
+        // If there's more old clauses than new clauses, remove them
+        for i in inds {
+            self.remove_clause(i);
+        }
+    }
+
+    /// Goal: make a new clause `(c1 - lit) ++ (c2 - !lit)`
+    ///
+    /// If that clause contains `x` and `!x` for some literal `x`, that's bad --
+    /// return `None`
+    fn resolve_two(lit: Literal, c1: &[Literal], c2: &[Literal]) -> Option<Clause> {
+        let mut result = {
+            let clause: TinyVec<_> = c1.iter().copied().filter(|&l| l != lit).collect();
+            Clause {
+                sig: signature(&clause),
+                clause,
+            }
+        };
+        for l in c2.iter().copied().filter(|&l| l != !lit) {
+            if result.contains(!l) {
+                return None;
+            } else if result.contains(l) {
+                // don't want duplicates
+                continue;
+            } else {
+                result.add_lit(l);
+            }
+        }
+
+        Some(result)
     }
 }
