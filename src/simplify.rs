@@ -1,4 +1,4 @@
-//! # Simplification / preprocessing
+//! # Preprocessing
 //!
 //! The first step in SAT solving is try to simplify the input as much as
 //! possible.
@@ -31,6 +31,7 @@
 //!    literal *once*, it's worth it to get rid of the variable through
 //!    "resolution": turn every pair `(x + A) and (-x + B)` into `(A + B)`.
 
+use crate::core::Solver;
 use crate::data;
 use crate::data::*;
 use crate::vec_map::VecMap;
@@ -154,12 +155,22 @@ enum Soln {
     Resolution,
 }
 
+/// The main state for the preprocessor.
 #[derive(Debug, Clone)]
 pub struct Preprocessing {
     clauses: Vec<Clause>,
     counts: VecMap<Literal, u32>,
     solutions: IndexMap<VarId, Soln>,
     at_fixpoint: bool,
+}
+
+/// The main state for the post-processor.  It is used to undo simplifications
+/// intoduced by the preprocssor, after the core solver has reached an answer.
+///
+/// Get a `Postprocessing` from [`Preprocessing::finish`].
+#[derive(Debug, Clone)]
+pub struct Postprocessing {
+    solutions: IndexMap<VarId, Soln>,
 }
 
 impl Preprocessing {
@@ -192,14 +203,11 @@ impl Preprocessing {
             self.num_vars(),
             nclauses,
         );
-        log::debug!("self: {:#?}", self);
 
         self.fixpoint(|this| {
-            this.fixpoint(Self::unit_clauses)?;
-            this.fixpoint(Self::pure_lits)?;
-            this.fixpoint(Self::almost_pure_lits)?;
-            this.fixpoint(Self::redundant_clauses)?;
-            Ok(())
+            this.unit_clauses()?;
+            this.pure_lits()?;
+            this.redundant_clauses()
         })?;
 
         log::info!(
@@ -210,9 +218,20 @@ impl Preprocessing {
         Ok(())
     }
 
-    // TODO: better interface
-    pub fn get_clauses(self) -> Vec<data::Clause> {
-        self.clauses.into_iter().map(|c| c.clause).collect()
+    /// Build a [`Solver`] from the preprocessed problem.
+    pub fn finish(self) -> (Solver, Postprocessing) {
+        let nvars = self.num_vars() as u32;
+        let active_vars: Vec<_> = self
+            .vars()
+            .map(|l| l.var_id())
+            .filter(|v| !self.solutions.contains_key(v))
+            .collect();
+        let clauses = self.clauses.into_iter().map(|c| c.clause).collect();
+        let solver = Solver::new(nvars, &active_vars[..], clauses, self.counts);
+        let post = Postprocessing {
+            solutions: self.solutions,
+        };
+        (solver, post)
     }
 }
 
@@ -368,32 +387,32 @@ impl Preprocessing {
 
 /// Pure literals
 impl Preprocessing {
-    /// Process all pure literals
+    /// Process all pure literals and almost pure literals
     fn pure_lits(&mut self) -> Result<(), Unsat> {
-        for var in self.vars() {
-            if self.solutions.contains_key(&var.var_id()) {
+        for v in self.vars() {
+            if self.solutions.contains_key(&v.var_id()) {
+                continue;
+            }
+            if self.counts[v] > ALMOST_PURE_LIMIT && self.counts[!v] > ALMOST_PURE_LIMIT {
                 continue;
             }
 
-            let pure_lit;
-            if self.counts[var] == 0 {
-                pure_lit = !var;
-            } else if self.counts[!var] == 0 {
-                pure_lit = var;
+            if self.counts[v] == 0 {
+                self.one_pure_lit(!v)?;
+            } else if self.counts[!v] == 0 {
+                self.one_pure_lit(v)?;
             } else {
-                continue;
-            };
-
-            log::debug!("Processing pure {:?}", pure_lit);
-            self.at_fixpoint = false;
-
-            self.one_pure_lit(pure_lit)?;
+                self.one_almost_pure_lit(v);
+            }
         }
 
         Ok(())
     }
 
     fn one_pure_lit(&mut self, lit: Literal) -> Result<(), Unsat> {
+        log::debug!("Processing pure {:?}", lit);
+        self.at_fixpoint = false;
+
         self.assign_lit(lit)?;
 
         // iterate backwards for easy removal
@@ -414,24 +433,9 @@ const ALMOST_PURE_LIMIT: u32 = 10;
 
 /// Almost pure literals
 impl Preprocessing {
-    /// Process all almost pure literals
-    fn almost_pure_lits(&mut self) -> Result<(), Unsat> {
-        for v in self.vars() {
-            if self.solutions.contains_key(&v.var_id()) {
-                continue;
-            }
-            if self.counts[v] > ALMOST_PURE_LIMIT && self.counts[!v] > ALMOST_PURE_LIMIT {
-                continue;
-            }
-
-            log::debug!("Trying almost pure literal {:?}", v);
-            self.one_almost_pure_lit(v);
-        }
-
-        Ok(())
-    }
-
     fn one_almost_pure_lit(&mut self, lit: Literal) {
+        log::debug!("Trying almost pure literal {:?}", lit);
+
         let mut positive_clauses = Vec::new();
         let mut negative_clauses = Vec::new();
         for (i, c) in self.clauses.iter().enumerate() {
@@ -455,13 +459,14 @@ impl Preprocessing {
 
                 // Make sure not to generate more clauses than we started with
                 if new_clauses.len() > old_len {
-                    log::debug!("{:?} wasn't almost pure enough :(", lit);
+                    log::debug!("{:?} wasn't almost-pure enough :(", lit);
                     return;
                 }
             }
         }
 
         // Replace the positive_clauses and negative_clauses with new_clauses
+        self.solutions.insert(lit.var_id(), Soln::Resolution);
         log::debug!(
             "Success: replacing {} old clauses with {} new clauses",
             old_len,
