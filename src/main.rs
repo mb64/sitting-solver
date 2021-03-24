@@ -23,7 +23,7 @@ fn main() -> io::Result<()> {
         }
         pre.finish()
     };
-    if solver.solve() {
+    if solver.solve().is_ok() {
         println!("Sat!");
         for (vid, &state) in solver.substitution.inner.iter().enumerate() {
             println!("{:4}: {:?}", vid + 1, state);

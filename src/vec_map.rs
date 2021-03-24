@@ -11,7 +11,7 @@ pub trait NumericId: Copy {
 /// It's a convenience wrapper type around a `Vec<V>`
 #[derive(Debug, Clone)]
 pub struct VecMap<K: NumericId, V> {
-    pub _marker: PhantomData<K>,
+    pub _marker: PhantomData<fn(K)>,
     pub inner: Vec<V>,
 }
 
@@ -37,5 +37,9 @@ impl<K: NumericId, V> VecMap<K, V> {
             _marker: PhantomData,
             inner,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
     }
 }
