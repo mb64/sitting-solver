@@ -81,26 +81,25 @@ impl Solver {
 impl Solver {
     /// Increment the counter, and maybe log stuff idk
     fn tick(&mut self) {
-        self.counter += 1;
-        if self.counter % 1_000_000 == 0 {
+        if self.counter % 100_000 == 0 {
             println!(
-                "after {} iterations: {}",
+                "after {} iterations: {} vars left, {} clauses",
                 self.counter,
-                self.trail.len() + self.heuristic.len() + 1
+                self.trail.len() + self.heuristic.len() + 1,
+                self.clauses.len()
             );
         }
+        self.counter += 1;
     }
 
     /// Add this variable to the trail
     fn trail(&mut self, lit: Literal) {
         // If there's no trailheads, then we know this variable assignment for
         // certain, and there's no need to ever backtrack it
-        //
-        // TODO: bench with and without the if statement
         if !self.trailheads.is_empty() {
             self.trail.push(lit);
         }
-        println!("Trailing {:?}", lit);
+        // println!("Trailing {:?}", lit);
     }
 
     /// Solve the SAT problem!
@@ -114,13 +113,14 @@ impl Solver {
 
             match self.guess(next_lit) {
                 Ok(()) => continue,
-                Err(cid) => loop {
+                Err(mut cid) => loop {
                     let (bad_guess, learned_cid) = self.handle_conflict(cid)?;
 
                     self.tick();
 
-                    if self.nope_wrong(bad_guess, learned_cid).is_ok() {
-                        break;
+                    match self.nope_wrong(bad_guess, learned_cid) {
+                        Ok(()) => break,
+                        Err(new_cid) => cid = new_cid,
                     }
                 },
             }
@@ -134,7 +134,8 @@ impl Solver {
     fn guess(&mut self, lit: Literal) -> Result<(), ClauseId> {
         debug_assert!(self.unit_prop_worklist.is_empty());
 
-        println!("Guessing {:?}", lit);
+        // println!("Trail length: {}", self.trail.len());
+        // println!("Guessing {:?}", lit);
 
         // this is next level
         self.trailheads.push(self.trail.len());
@@ -292,7 +293,7 @@ impl Solver {
     fn analyze_conflict(&mut self, bad_cid: ClauseId) -> Result<Clause, Unsat> {
         // Resolve the conflict clause against reason clauses until it only has
         // one variable from the latest decision level
-        println!("Conflict in {:?}", self.clauses[bad_cid]);
+        // println!("Conflict in {:?}", self.clauses[bad_cid]);
 
         // if there's no latest trailhead, the conflict is unconditional and the
         // whole thing is unsat
@@ -317,15 +318,20 @@ impl Solver {
             if lit == !all_latest_lits[0] {
                 std::mem::swap(&mut lit, &mut new_clause_latest_lits[0]);
             }
-            dbg!(lit);
             // Resolve with reason clause
+            //println!("---- new clause to resolve with ----");
+            //dbg!(lit);
+            //println!(
+            //    "reason clause: {:?}",
+            //    self.clauses[self.reasons[lit.var_id()]]
+            //);
             for &l in &self.clauses[self.reasons[lit.var_id()]] {
-                dbg!(&new_clause[..]);
-                dbg!(&new_clause_latest_lits);
-                dbg!(l);
+                // println!("new_clause: {:?}", &new_clause[..]);
+                // println!("new_clause_latest_lits: {:?}", &new_clause_latest_lits[..]);
+                // dbg!(l);
                 debug_assert!(!new_clause.contains(&!l));
                 debug_assert!(!new_clause_latest_lits.contains(&!l));
-                if l == lit {
+                if l == !lit {
                     continue;
                 } else if all_latest_lits.contains(&!l) {
                     if !new_clause_latest_lits.contains(&l) {
@@ -341,7 +347,7 @@ impl Solver {
         let last_ind = new_clause.len() - 1;
         new_clause.swap(0, last_ind);
 
-        println!("Learned clause: {:?}", new_clause);
+        // println!("Learned clause: {:?}", new_clause);
 
         Ok(new_clause)
     }
@@ -404,6 +410,10 @@ impl Solver {
         }
         self.watched_clauses[learned_clause[0]].push(learned_cid);
         self.watched_clauses[learned_clause[1]].push(learned_cid);
+
+        self.reasons[learned_clause[0].var_id()] = learned_cid;
+
+        // println!("Backtracked to trail length {}", self.trail.len());
 
         Ok((!learned_clause[0], learned_cid))
     }

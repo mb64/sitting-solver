@@ -107,7 +107,7 @@ impl Heuristic {
         }
         self.heap.swap_remove(ind as usize);
 
-        if !self.is_empty() {
+        if (ind as usize) < self.len() {
             self.bubble_down(ind as usize);
         }
     }

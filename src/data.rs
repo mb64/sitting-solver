@@ -66,9 +66,9 @@ pub struct Literal {
 impl Debug for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.is_negated() {
-            write!(f, "Literal(neg {:?})", self.var_id())
+            write!(f, "-{}", self.var_id().0)
         } else {
-            write!(f, "Literal({:?})", self.var_id())
+            write!(f, "{}", self.var_id().0)
         }
     }
 }
