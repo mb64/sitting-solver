@@ -1,5 +1,7 @@
 # Sitting solver
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Sitting solver aspires to be a good SAT solver in the future.
 
 Resources about SAT solvers:
