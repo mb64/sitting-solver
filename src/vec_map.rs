@@ -9,7 +9,7 @@ pub trait NumericId: Copy {
 /// A dense map from (numeric id) keys to values
 ///
 /// It's a convenience wrapper type around a `Vec<V>`
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VecMap<K: NumericId, V> {
     pub _marker: PhantomData<fn(K)>,
     pub inner: Vec<V>,

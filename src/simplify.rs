@@ -37,12 +37,10 @@
 //!  - Equivalent literals: given the clauses `(x + -y)` and `(-x + y)`, `x` and
 //!    `y` are equivalent.
 //!
-//! ## Example
+//! ## Examples
 //!
-//! Make a [`Preprocessor`] struct using [`Preprocessor::new`], run the
-//! simplification steps to a fixpoint using [`Preprocessor::simplify`], and
-//! get the resulting [`Solver`] and [`Postprocessor`] using
-//! [`Preprocessor::finish`].
+//! Make a [`Preprocessor`] struct using [`Preprocessor::new`], and run the
+//! simplification steps to a fixpoint using [`Preprocessor::simplify`].
 //!
 //! ```
 //! # use sitting_solver::data::*;
@@ -63,11 +61,40 @@
 //!
 //! // This problem is simple enough for the preprocessor to solve it completely
 //! assert_eq!(pre.simplify(), Err(Unsat));
+//! ```
 //!
-//! // If it didn't, we would have to go on to use the main DPLL solver:
-//! let (solver, post) = pre.finish();
-//! // ...
-//! # drop((solver, post));
+//! If the preprocessor doesn't return `Unsat`, get the resulting [`Solver`]
+//! and [`Postprocessor`] using [`Preprocessor::finish`].
+//!
+//! Then, if the core solver doesn't return `Unsat`, use the postprocessor to
+//! get a satisfying model using [`Postprocessor::postprocess`].
+//!
+//! ```
+//! # use sitting_solver::data::*;
+//! # use tinyvec::tiny_vec;
+//! # use sitting_solver::{Preprocessor, VecMap};
+//! let var_count = 2;
+//! let x = Literal::new(VarId(0));
+//! let y = Literal::new(VarId(1));
+//!
+//! let clauses = vec![
+//!     tiny_vec![x, y],
+//!     tiny_vec![x, !y],
+//!     tiny_vec![!x, y],
+//! ];
+//!
+//! let mut pre = Preprocessor::new(var_count, clauses);
+//! pre.simplify().unwrap();
+//!
+//! // Call the main DPLL solver
+//! let (mut solver, post) = pre.finish();
+//! solver.solve().unwrap();
+//!
+//! // Get the satisfying model
+//! let model = post.postprocess(&solver);
+//!
+//! // The only satisfying assignment for this problem is { x ↦ True, y ↦ True }
+//! assert_eq!(model, VecMap::new(vec![VarState::True, VarState::True]));
 //! ```
 
 use crate::core::Solver;
@@ -184,19 +211,27 @@ impl Clause {
     }
 }
 
-// Something like this
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum Soln {
     True,
     False,
-    /// Was solved by resolution. TODO: figure out how to get a solution out of
-    /// this (might just have to resort to saving the original clauses and using
-    /// guess and check)
-    Resolution,
+    /// Was solved by resolution.
+    ///
+    /// In postprocessing, replace it by ``neg `xor` all [c is true | c <-
+    /// clauses]``
+    Resolution {
+        neg: bool,
+        clauses: Vec<data::Clause>,
+    },
 }
 
-/// The main state for the preprocessor. See the [module
-/// docs][`crate::simplify`] for more info
+/// The main state for the preprocessor.
+///
+/// See the [module docs][`crate::simplify`] for more info
+///
+/// Get a `Preprocessor` from [`Preprocessor::new`], preprocess with
+/// [`Preprocessor::simplify`], and then turn it into a [`Solver`] and
+/// [`Postprocessor`] with [`Preprocessor::finish`]
 #[derive(Debug, Clone)]
 pub struct Preprocessor {
     original_clauses: Vec<data::Clause>,
@@ -206,13 +241,15 @@ pub struct Preprocessor {
     at_fixpoint: bool,
 }
 
-/// The main state for the post-processor. See the [module
-/// docs][`crate::simplify`] for more info
+/// The main state for the post-processor.
+///
+/// See the [module docs][`crate::simplify`] for more info
 ///
 /// It is used to undo simplifications intoduced by the preprocssor, after the
 /// core solver has reached an answer.
 ///
-/// Get a `Postprocessor` from [`Preprocessor::finish`].
+/// Get a `Postprocessor` from [`Preprocessor::finish`], and use it to get a
+/// model from the solver with [`Postprocessor::postprocess`].
 #[derive(Debug, Clone)]
 pub struct Postprocessor {
     original_clauses: Vec<data::Clause>,
@@ -244,6 +281,7 @@ impl Preprocessor {
         }
     }
 
+    /// Apply simplification steps to a fixpoint.
     pub fn simplify(&mut self) -> Result<(), Unsat> {
         let nclauses = self.clauses.len();
         log::info!(
@@ -302,30 +340,30 @@ impl Preprocessor {
         }
     }
 
-    fn assign(&mut self, var: VarId, soln: Soln) -> Result<(), Unsat> {
-        log::debug!("Solved {:?}: {:?}", var, soln);
-        if let Some(old_value) = self.solutions.insert(var, soln) {
-            match old_value {
-                Soln::Resolution => unreachable!(),
-                _ if old_value != soln => {
-                    log::info!("Preprocessing found UNSAT: {:?} assigned twice", var);
-                    return Err(Unsat);
-                }
-                _ => (),
+    fn assign_lit(&mut self, lit: Literal) -> Result<(), Unsat> {
+        let soln;
+        let bad_soln;
+        if lit.is_negated() {
+            soln = Soln::False;
+            bad_soln = Soln::True;
+        } else {
+            soln = Soln::True;
+            bad_soln = Soln::False;
+        }
+
+        log::debug!("Solved {:?}: {:?}", lit.var_id(), soln);
+
+        if let Some(old_value) = self.solutions.insert(lit.var_id(), soln) {
+            if old_value == bad_soln {
+                log::info!(
+                    "Preprocessing found UNSAT: {:?} assigned twice",
+                    lit.var_id()
+                );
+                return Err(Unsat);
             }
         }
-        Ok(())
-    }
 
-    fn assign_lit(&mut self, lit: Literal) -> Result<(), Unsat> {
-        self.assign(
-            lit.var_id(),
-            if lit.is_negated() {
-                Soln::False
-            } else {
-                Soln::True
-            },
-        )
+        Ok(())
     }
 
     fn fixpoint(&mut self, mut f: impl FnMut(&mut Self) -> Result<(), Unsat>) -> Result<(), Unsat> {
@@ -521,23 +559,58 @@ impl Preprocessor {
             }
         }
 
-        // Replace the positive_clauses and negative_clauses with new_clauses
-        self.solutions.insert(lit.var_id(), Soln::Resolution);
         log::debug!(
             "Success: replacing {} old clauses with {} new clauses",
             old_len,
             new_clauses.len()
         );
+
+        // Update the counts
+        for clause in &new_clauses {
+            for &lit in &clause.clause {
+                self.counts[lit] += 1;
+            }
+        }
+        for &cid in positive_clauses.iter().chain(negative_clauses.iter()) {
+            for &lit in &self.clauses[cid].clause {
+                self.counts[lit] -= 1;
+            }
+        }
+
+        // Update the solutions
+        let soln = {
+            let clause_inds;
+            let neg;
+            let to_remove;
+            if positive_clauses.len() < negative_clauses.len() {
+                clause_inds = &positive_clauses[..];
+                neg = !lit.is_negated();
+                to_remove = lit;
+            } else {
+                clause_inds = &negative_clauses[..];
+                neg = lit.is_negated();
+                to_remove = !lit;
+            }
+
+            Soln::Resolution {
+                neg,
+                clauses: clause_inds
+                    .iter()
+                    .map(|&cid| {
+                        let mut c = mem::take(&mut self.clauses[cid].clause);
+                        c.remove(c.iter().position(|&x| x == to_remove).unwrap());
+                        c
+                    })
+                    .collect(),
+            }
+        };
+        self.solutions.insert(lit.var_id(), soln);
+
+        // Replace the positive_clauses and negative_clauses with new_clauses
         let mut inds = positive_clauses.into_iter().chain(negative_clauses);
         for new_clause in new_clauses {
             let i = inds.next().unwrap();
-            for &l in &new_clause.clause {
-                self.counts[l] += 1;
-            }
-            let old_clause = mem::replace(&mut self.clauses[i], new_clause);
-            for l in old_clause.clause {
-                self.counts[l] -= 1;
-            }
+            self.clauses[i] = new_clause;
         }
 
         // If there's more old clauses than new clauses, remove them
@@ -545,7 +618,7 @@ impl Preprocessor {
         let mut leftovers: Vec<_> = inds.collect();
         leftovers.sort_by(|a, b| b.cmp(a));
         for i in leftovers {
-            self.remove_clause(i);
+            self.clauses.swap_remove(i);
         }
 
         Ok(true)
@@ -580,5 +653,56 @@ impl Preprocessor {
         } else {
             Ok(Some(result))
         }
+    }
+}
+
+impl Postprocessor {
+    /// Postprocess a successful solution from the core solver.
+    ///
+    /// Call this when [`Solver::solve`] returns `Ok` to get a satisfying model.
+    pub fn postprocess(&self, solver: &Solver) -> VecMap<VarId, VarState> {
+        let mut subst = solver.substitution.clone();
+
+        // Assign values in the reverse order they were figured out
+        for (&var, state) in self.solutions.iter().rev() {
+            debug_assert_eq!(subst[var], Unknown);
+            match state {
+                Soln::False => subst[var] = VarState::False,
+                Soln::True => subst[var] = VarState::True,
+                Soln::Resolution { neg, clauses } => {
+                    let bool_value = clauses
+                        .iter()
+                        .all(|c| c.iter().any(|&l| Self::true_in_subst(l, &subst)));
+                    if bool_value ^ neg {
+                        subst[var] = VarState::True;
+                    } else {
+                        subst[var] = VarState::False;
+                    }
+                }
+            }
+        }
+
+        assert!(self.is_good(&subst));
+
+        subst
+    }
+
+    fn true_in_subst(lit: Literal, subst: &VecMap<VarId, VarState>) -> bool {
+        lit.is_negated() && subst[lit.var_id()] == VarState::False
+            || !lit.is_negated() && subst[lit.var_id()] == VarState::True
+    }
+
+    fn is_good(&self, subst: &VecMap<VarId, VarState>) -> bool {
+        'outer: for clause in &self.original_clauses {
+            // Check every literal
+            for &lit in clause {
+                if Self::true_in_subst(lit, subst) {
+                    continue 'outer;
+                }
+            }
+            // None was true
+            return false;
+        }
+        true
     }
 }

@@ -9,7 +9,7 @@ use tinyvec::TinyVec;
 #[derive(Debug, Clone)]
 pub struct Solver {
     clauses: VecMap<ClauseId, Clause>,
-    pub substitution: VecMap<VarId, VarState>,
+    pub(crate) substitution: VecMap<VarId, VarState>,
     watched_clauses: VecMap<Literal, Vec<ClauseId>>,
 
     heuristic: Heuristic,
@@ -80,12 +80,12 @@ impl Solver {
 
 impl Solver {
     /// Increment the counter, and maybe log stuff idk
-    fn tick(&mut self) {
-        if self.counter % 100_000 == 0 {
+    fn tick(&mut self, guessing: bool) {
+        if self.counter % 20_000 == 0 {
             println!(
                 "after {} iterations: {} vars left, {} clauses",
                 self.counter,
-                self.trail.len() + self.heuristic.len() + 1,
+                self.trail.len() + self.heuristic.len() + guessing as usize,
                 self.clauses.len()
             );
         }
@@ -109,14 +109,14 @@ impl Solver {
         debug_assert!(self.trail.is_empty());
 
         while let Some(next_lit) = self.heuristic.pop() {
-            self.tick();
+            self.tick(true);
 
             match self.guess(next_lit) {
                 Ok(()) => continue,
                 Err(mut cid) => loop {
                     let (bad_guess, learned_cid) = self.handle_conflict(cid)?;
 
-                    self.tick();
+                    self.tick(false);
 
                     match self.nope_wrong(bad_guess, learned_cid) {
                         Ok(()) => break,

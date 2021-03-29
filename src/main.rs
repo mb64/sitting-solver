@@ -25,10 +25,10 @@ fn main() -> io::Result<()> {
     };
     if solver.solve().is_ok() {
         println!("Sat!");
-        for (vid, &state) in solver.substitution.inner.iter().enumerate() {
+        let model = post.postprocess(&solver);
+        for (vid, &state) in model.inner.iter().enumerate() {
             println!("{:4}: {:?}", vid + 1, state);
         }
-        solver.verify();
     } else {
         println!("Unsat!");
     }
