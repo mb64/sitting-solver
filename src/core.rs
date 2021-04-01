@@ -1,8 +1,9 @@
 //! The core DPLL algorithm
 
 use crate::data::*;
-use crate::heuristic::Heuristic;
+use crate::heuristic::{ClauseHeuristic, LitHeuristic};
 use crate::vec_map::VecMap;
+use std::mem;
 use tinyvec::TinyVec;
 
 /// The main state for the solver
@@ -12,7 +13,8 @@ pub struct Solver {
     pub(crate) substitution: VecMap<VarId, VarState>,
     watched_clauses: VecMap<Literal, Vec<ClauseId>>,
 
-    heuristic: Heuristic,
+    lit_heuristic: LitHeuristic,
+    clause_heuristic: ClauseHeuristic,
 
     /// Trail for backtracking variable choices
     trail: Vec<Literal>,
@@ -60,15 +62,18 @@ impl Solver {
             }
         }
 
-        // let vars: Vec<_> = (0..var_count).map(VarId::new).collect();
-        let heuristic = Heuristic::new(active_vars, priorities);
+        let initial_learning_cap = var_count as usize + clauses.len();
+
+        let lit_heuristic = LitHeuristic::new(active_vars, priorities);
+        let clause_heuristic = ClauseHeuristic::new(clauses.len(), initial_learning_cap);
         let reasons = VecMap::new(vec![ClauseId(0); var_count as usize]);
 
         Self {
             clauses: VecMap::new(clauses),
             substitution,
             watched_clauses,
-            heuristic,
+            lit_heuristic,
+            clause_heuristic,
             trail: Vec::new(),
             trailheads: Vec::new(),
             unit_prop_worklist,
@@ -85,7 +90,7 @@ impl Solver {
             println!(
                 "after {} iterations: {} vars left, {} clauses",
                 self.counter,
-                self.trail.len() + self.heuristic.len() + guessing as usize,
+                self.trail.len() + self.lit_heuristic.len() + guessing as usize,
                 self.clauses.len()
             );
         }
@@ -108,7 +113,7 @@ impl Solver {
     pub fn solve(&mut self) -> Result<(), Unsat> {
         debug_assert!(self.trail.is_empty());
 
-        while let Some(next_lit) = self.heuristic.pop() {
+        while let Some(next_lit) = self.lit_heuristic.pop() {
             self.tick(true);
 
             match self.guess(next_lit) {
@@ -141,13 +146,9 @@ impl Solver {
         self.trailheads.push(self.trail.len());
         self.trail.push(lit);
 
-        // For debugging purposes
+        // A fake clause id for backtracking
         self.reasons[lit.var_id()] = ClauseId(u32::MAX);
         self.assign_true(lit)?;
-        // if self.assign_true(lit).is_err() {
-        //     self.unit_prop_worklist.clear();
-        //     return Err(Unsat);
-        // }
         self.unit_prop()
     }
 
@@ -159,11 +160,8 @@ impl Solver {
         self.trail(!lit);
 
         self.reasons[lit.var_id()] = clause_id;
+        self.clause_heuristic.dont_remove(clause_id);
         self.assign_true(!lit)?;
-        // if self.assign_true(!lit).is_err() {
-        //     self.unit_prop_worklist.clear();
-        //     return Err(Unsat);
-        // }
         self.unit_prop()
     }
 
@@ -190,12 +188,9 @@ impl Solver {
             }
 
             self.trail(lit);
+            self.clause_heuristic.dont_remove(cid);
             self.reasons[lit.var_id()] = cid;
             self.assign_true(lit)?;
-            // self.assign_true(lit).map_err(|cid| {
-            //     self.unit_prop_worklist.clear();
-            //     cid
-            // })?;
         }
 
         Ok(())
@@ -222,7 +217,7 @@ impl Solver {
         self.substitution[lit.var_id()] = if lit.is_negated() { False } else { True };
 
         // Remove the variable from the queue
-        self.heuristic.remove(lit.var_id());
+        self.lit_heuristic.remove(lit.var_id());
 
         // loop thru this literal's watched clauses
         // (backwards, to make removing things easier)
@@ -319,16 +314,7 @@ impl Solver {
                 std::mem::swap(&mut lit, &mut new_clause_latest_lits[0]);
             }
             // Resolve with reason clause
-            //println!("---- new clause to resolve with ----");
-            //dbg!(lit);
-            //println!(
-            //    "reason clause: {:?}",
-            //    self.clauses[self.reasons[lit.var_id()]]
-            //);
             for &l in &self.clauses[self.reasons[lit.var_id()]] {
-                // println!("new_clause: {:?}", &new_clause[..]);
-                // println!("new_clause_latest_lits: {:?}", &new_clause_latest_lits[..]);
-                // dbg!(l);
                 debug_assert!(!new_clause.contains(&!l));
                 debug_assert!(!new_clause_latest_lits.contains(&!l));
                 if l == !lit {
@@ -352,6 +338,18 @@ impl Solver {
         Ok(new_clause)
     }
 
+    /// Remove this clause from its watch lists
+    fn deregister_clause(&mut self, cid: ClauseId) {
+        let clause = &self.clauses[cid][..];
+        for &lit in &clause[0..2] {
+            let ind = self.watched_clauses[lit]
+                .iter()
+                .position(|&c| c == cid)
+                .unwrap();
+            self.watched_clauses[lit].swap_remove(ind);
+        }
+    }
+
     /// Dealing with a conflict involves three things:
     ///  * Conflict analysis
     ///  * Clause learning
@@ -364,9 +362,16 @@ impl Solver {
         //
         // Also set up watched literals for the new clause
 
-        let learned_cid = ClauseId(self.clauses.len() as u32);
         let new_clause = self.analyze_conflict(bad_cid)?;
-        self.clauses.inner.push(new_clause);
+        let learned_cid;
+        if let Some(cid) = self.clause_heuristic.where_to_put_new_clause() {
+            learned_cid = cid;
+            self.deregister_clause(learned_cid);
+            self.clauses[learned_cid] = new_clause;
+        } else {
+            learned_cid = ClauseId(self.clauses.len() as u32);
+            self.clauses.inner.push(new_clause);
+        }
         let learned_clause = &mut self.clauses[learned_cid][..];
 
         // Special case: when the learned clause is actually a unit clause
@@ -393,7 +398,12 @@ impl Solver {
         for lit in self.trail.drain(new_trail_len..) {
             // println!("  Backtracking {:?}", var);
             self.substitution[lit.var_id()] = Unknown;
-            self.heuristic.re_add(lit.var_id());
+            self.lit_heuristic.re_add(lit.var_id());
+            // Replace is for debugging purposes
+            let reason_cid = mem::replace(&mut self.reasons[lit.var_id()], ClauseId(u32::MAX));
+            if reason_cid.0 != u32::MAX {
+                self.clause_heuristic.ok_to_remove_now(reason_cid);
+            }
         }
 
         // Set up watched literals for the new clause
