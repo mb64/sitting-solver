@@ -34,8 +34,9 @@ To do:
  - [ ] Conflict-clause minimization
  - [ ] Update the heuristic: VSIDS
  - [x] Backjumping
- - [ ] Limits for clause learning, + heuristic for which learned clauses to keep
+ - [x] Limits for clause learning, + heuristic for which learned clauses to keep
  - [ ] Restarts?
+ - [ ] Profiling + optimization
  - [ ] Better docs
 
 In the (far) future, I hope to extend it to a simple [DPLL(T)] SMT solver. This
