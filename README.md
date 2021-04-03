@@ -37,6 +37,7 @@ To do:
  - [x] Limits for clause learning, + heuristic for which learned clauses to keep
  - [ ] Restarts?
  - [ ] Profiling + optimization
+ - [ ] Automated testing infrastructure
  - [ ] Better docs
 
 In the (far) future, I hope to extend it to a simple [DPLL(T)] SMT solver. This
@@ -48,8 +49,9 @@ would involve:
  - Theory solvers: [LRA], congruence closure for UF
  - Theory-specific preprocessing?
  - Something about quantifiers and E-graphs, idk
- - Would also be cool to have: NRA by [ICP + LRA], LIA somehow
+ - Would also be cool to have: NRA by [ICP + LRA] or [CAD], LIA somehow
 
 [DPLL(T)]: https://en.wikipedia.org/wiki/DPLL(T)
 [LRA]: https://yices.csl.sri.com/papers/cav06.pdf
 [ICP + LRA]: https://www.cs.colorado.edu/~srirams/papers/FMCAD10.PDF
+[CAD]: http://leodemoura.github.io/files/IJCAR2012.pdf

@@ -661,18 +661,24 @@ impl Postprocessor {
     ///
     /// Call this when [`Solver::solve`] returns `Ok` to get a satisfying model.
     pub fn postprocess(&self, solver: &Solver) -> VecMap<VarId, VarState> {
+        assert!(solver.is_good());
+
         let mut subst = solver.substitution.clone();
 
-        // Assign values in the reverse order they were figured out
+        // Undo simplifications in reverse order
         for (&var, state) in self.solutions.iter().rev() {
             debug_assert_eq!(subst[var], Unknown);
             match state {
                 Soln::False => subst[var] = VarState::False,
                 Soln::True => subst[var] = VarState::True,
                 Soln::Resolution { neg, clauses } => {
-                    let bool_value = clauses
-                        .iter()
-                        .all(|c| c.iter().any(|&l| Self::true_in_subst(l, &subst)));
+                    let bool_value = clauses.iter().all(|c| {
+                        c.iter().any(|&lit| match subst[lit.var_id()] {
+                            VarState::True => !lit.is_negated(),
+                            VarState::False => lit.is_negated(),
+                            VarState::Unknown => unreachable!(),
+                        })
+                    });
                     if bool_value ^ neg {
                         subst[var] = VarState::True;
                     } else {
@@ -687,22 +693,22 @@ impl Postprocessor {
         subst
     }
 
-    fn true_in_subst(lit: Literal, subst: &VecMap<VarId, VarState>) -> bool {
-        lit.is_negated() && subst[lit.var_id()] == VarState::False
-            || !lit.is_negated() && subst[lit.var_id()] == VarState::True
-    }
-
     fn is_good(&self, subst: &VecMap<VarId, VarState>) -> bool {
         'outer: for clause in &self.original_clauses {
             // Check every literal
             for &lit in clause {
-                if Self::true_in_subst(lit, subst) {
-                    continue 'outer;
-                }
+                match subst[lit.var_id()] {
+                    VarState::True if !lit.is_negated() => continue 'outer,
+                    VarState::False if lit.is_negated() => continue 'outer,
+                    _ => (),
+                };
             }
-            // None was true
+
+            log::warn!("Solution was not valid: failed clause {:?}", clause);
             return false;
         }
+
+        log::info!("Solution was valid");
         true
     }
 }

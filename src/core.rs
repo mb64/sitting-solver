@@ -19,7 +19,8 @@ pub struct Solver {
     /// Trail for backtracking variable choices
     trail: Vec<Literal>,
 
-    /// Indices into the trail marking choice points
+    /// Indices into the trail marking decision literals
+    ///
     /// The values of the vars at these indices in the trail were chosen instead
     /// of solved
     trailheads: Vec<usize>,
@@ -107,7 +108,7 @@ impl Solver {
         // println!("Trailing {:?}", lit);
     }
 
-    /// Solve the SAT problem!
+    /// The main DPLL loop
     ///
     /// Returns `Ok(())` if it's SAT and `Err(Unsat)` if it's UNSAT
     pub fn solve(&mut self) -> Result<(), Unsat> {
@@ -429,15 +430,18 @@ impl Solver {
     }
 
     /// Check the solution is valid
-    pub fn verify(&self) {
+    pub fn is_good(&self) -> bool {
         'outer: for clause in &self.clauses.inner {
             for &lit in &clause[..] {
                 if Self::lookup(&self.substitution, lit) == True {
                     continue 'outer;
                 }
             }
-            panic!("Not satisfied: {:?}", clause);
+            log::warn!("Solution was not valid: failed clause {:?}", clause);
+            return false;
         }
-        println!("Yep, it's good");
+
+        log::info!("Solution was valid");
+        true
     }
 }
